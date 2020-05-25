@@ -187,6 +187,14 @@ hitable* two_spheres() {
   return new hitable_list(list, 2);
 }
 
+hitable* two_perlin_spheres() {
+  texture* pertext = new noise_texture(2);
+  hitable** list = new hitable*[2];
+  list[0] = new sphere(vec3(0,-1000, 0), 1000, new lambertian(pertext));
+  list[1] = new sphere(vec3(0,2, 0), 2, new lambertian(pertext));
+  return new hitable_list(list,2);
+}
+
 hitable* random_scene(float time0, float time1) {
   int n = 50000;
   hitable** list = new hitable*[n+1];
@@ -244,8 +252,9 @@ int main(int argc, char *argv[]) {
   float time0 = 0.0;
   float time1 = 1.0;
 
-  hitable* world = random_scene(time0, time1);
+  //hitable* world = random_scene(time0, time1);
   //hitable* world = two_spheres();
+  hitable* world = two_perlin_spheres();
 
   vec3 lookfrom(5,1.5,2);
   vec3 lookat(0,0,0);
