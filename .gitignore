@@ -1,2 +1,5 @@
 out/
 .vs/
+*.swp
+.clangd/
+compile_commands.json

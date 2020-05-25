@@ -4,6 +4,7 @@ project ( SimpleRT LANGUAGES CXX)
 
 # Set to c++17
 set ( CMAKE_CXX_STANDARD 17 )
+set(CMAKE_EXPORT_COMPILE_COMMANDS ON)
 list(APPEND CMAKE_MODULE_PATH "$ENV{Eigen3_ROOT}/cmake")
 
 SET(Eigen3_DIR "$ENV{Eigen3_ROOT}" CACHE LOCATION "Where is Eigen3?")

@@ -21,6 +21,7 @@
 #include "float.h"
 #include "camera.h"
 #include "bvh.hpp"
+#include "texture.hpp"
 
 void write_to_buffer(unsigned char* databuffer, size_t index, vec3 color) {
   int ir = int(255.99*color[0]);
@@ -73,14 +74,14 @@ public:
 
 class lambertian : public material {
   public:
-    lambertian(const vec3& a) : albedo(a) {}
+    lambertian(texture* a) : albedo(a) {}
     virtual bool scatter(const ray& r_in, const hit_record& rec, vec3& attenuation, ray& scattered) const {
       vec3 target = rec.p + rec.normal + random_in_unit_sphere();
       scattered = ray(rec.p, target-rec.p, r_in.time());
-      attenuation = albedo;
+      attenuation = albedo->value(0,0, rec.p);
       return true;
     }
-    vec3 albedo;
+    texture* albedo;
 };
 
 class metal : public material {
@@ -176,10 +177,22 @@ vec3 color(const ray& r, hitable* world, int depth) {
   }
 }
 
+hitable* two_spheres() {
+  texture* checkerTex = new checker_texture(new constant_texture(vec3(0.2, 0.3, 0.1)), new constant_texture(vec3(0.9,0.9,0.9)));
+  int n = 50;
+  hitable** list = new hitable*[n+1];
+  list[0] = new sphere(vec3(0, -10, 0), 10, new lambertian(checkerTex));
+  list[1] = new sphere(vec3(0, 10, 0), 10, new lambertian(checkerTex));
+
+  return new hitable_list(list, 2);
+}
+
 hitable* random_scene(float time0, float time1) {
   int n = 50000;
   hitable** list = new hitable*[n+1];
-  list[0] = new sphere(vec3(0, -1000, 0), 1000, new lambertian(vec3(0.5, 0.5, 0.5)));
+
+  texture* checkerTex = new checker_texture(new constant_texture(vec3(0.2, 0.3, 0.1)), new constant_texture(vec3(0.9,0.9,0.9)));
+  list[0] = new sphere(vec3(0, -1000, 0), 1000, new lambertian(checkerTex));
   int i = 1;
   for (int a = -11; a < 11; a++) {
     for (int b = -11; b < 11; b++) {
@@ -187,7 +200,7 @@ hitable* random_scene(float time0, float time1) {
       vec3 center(a+0.9*uniform(gen),0.2, b+0.9*uniform(gen));
       if((center - vec3(4,0.2, 0)).length() > 0.9) {
         if(choose_mat < 0.8) { //difuse
-          list[i++] = new moving_sphere(center, center+vec3(0.0, 0.5 * uniform(gen), 0), 0.0, 1.0, 0.2, new lambertian(vec3(uniform(gen) * uniform(gen), uniform(gen)*uniform(gen), uniform(gen)*uniform(gen))));
+          list[i++] = new moving_sphere(center, center+vec3(0.0, 0.5 * uniform(gen), 0), 0.0, 1.0, 0.2, new lambertian(new constant_texture(vec3(uniform(gen) * uniform(gen), uniform(gen)*uniform(gen), uniform(gen)*uniform(gen)))));
         } else if (choose_mat < 0.9) { //metal
           list[i++] = new sphere(center, 0.2,
               new metal(vec3(0.5*(1 + uniform(gen)),0.5*(1 + uniform(gen)),0.5*(1 + uniform(gen))), 0.5 * uniform(gen)));
@@ -198,7 +211,7 @@ hitable* random_scene(float time0, float time1) {
     }
   }
   list[i++] = new sphere(vec3(0, 1,0), 1.0, new dielectric(1.5));
-  list[i++] = new sphere(vec3(-4, 1, 0), 1.0, new lambertian(vec3(0.4, 0.2, 0.1)));
+  list[i++] = new sphere(vec3(-4, 1, 0), 1.0, new lambertian(new constant_texture(vec3(0.4, 0.2, 0.1))));
   list[i++] = new sphere(vec3(4,1,0), 1.0, new metal(vec3(0.7, 0.6, 0.5), 0.0));
 
   return new bvh_node(list, i, time0, time1);
@@ -210,7 +223,7 @@ int main(int argc, char *argv[]) {
   // setup size of render image
   //const int nx = 2400;
   //const int ny = 1200;
-  const int size_multiplier = 1;
+  const int size_multiplier = 4;
   const int nx = 200*size_multiplier;
   const int ny = 100*size_multiplier;
 
@@ -232,6 +245,7 @@ int main(int argc, char *argv[]) {
   float time1 = 1.0;
 
   hitable* world = random_scene(time0, time1);
+  //hitable* world = two_spheres();
 
   vec3 lookfrom(5,1.5,2);
   vec3 lookat(0,0,0);
