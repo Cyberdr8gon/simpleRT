@@ -15,4 +15,7 @@ message(STATUS "Eigen Dir " ${EIGEN3_INCLUDE_DIR})
 
 add_definitions(${EIGEN3_DEFINITIONS})
 include_directories(${EIGEN3_INCLUDE_DIR})
+
+include_directories("include")
+
 add_executable(simpleRT "src/main.cpp")
