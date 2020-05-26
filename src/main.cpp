@@ -18,15 +18,22 @@
 #include "ray.hpp"
 #include "hitablelist.hpp"
 #include "sphere.h"
+#include "rect.h"
+#include "box.hpp"
 #include "float.h"
 #include "camera.h"
 #include "bvh.hpp"
 #include "texture.hpp"
+#include "material.hpp"
+#include "constantMedium.hpp"
 
 void write_to_buffer(unsigned char* databuffer, size_t index, vec3 color) {
   int ir = int(255.99*color[0]);
   int ig = int(255.99*color[1]);
   int ib = int(255.99*color[2]);
+  if(ir > 255) ir = 255;
+  if(ig > 255) ig = 255;
+  if(ib > 255) ib = 255;
 
   databuffer[index] = ir;
   databuffer[index+1] = ig;
@@ -34,118 +41,9 @@ void write_to_buffer(unsigned char* databuffer, size_t index, vec3 color) {
 
 }
 
-vec3 random_in_unit_sphere() {
-  vec3 p;
-  do {
-    p = 2.0*vec3(uniform(gen), uniform(gen), uniform(gen)) - vec3(1,1,1);
-  } while(p.squared_length() >= 1.0);
-  return p;
-}
 
 
-vec3 reflect(const vec3& v, const vec3& n) {
-  return v - 2*dot(v, n) * n;
-}
-
-bool refract(const vec3& v, const vec3& n, float ni_over_nt, vec3& refracted) {
-  vec3 uv = unit_vector(v);
-  float dt = dot(uv, n);
-  float discriminant = 1.0 - ni_over_nt*ni_over_nt * (1-dt*dt);
-  if(discriminant > 0) {
-    refracted = ni_over_nt * (uv - n*dt) - n*sqrt(discriminant);
-    return true;
-  } else {
-    return false;
-  }
-
-}
-
-float schlick(float cosine, float ref_idx) {
-  float r0 = (1-ref_idx) / (1+ref_idx);
-  r0 = r0 * r0;
-  return r0 + (1-r0)*pow((1-cosine), 5);
-}
-
-class material
-{
-public:
-  virtual bool scatter(const ray& r_in, const hit_record& rec, vec3& attenuation, ray& scattered) const = 0;
-};
-
-class lambertian : public material {
-  public:
-    lambertian(texture* a) : albedo(a) {}
-    virtual bool scatter(const ray& r_in, const hit_record& rec, vec3& attenuation, ray& scattered) const {
-      vec3 target = rec.p + rec.normal + random_in_unit_sphere();
-      scattered = ray(rec.p, target-rec.p, r_in.time());
-      attenuation = albedo->value(0,0, rec.p);
-      return true;
-    }
-    texture* albedo;
-};
-
-class metal : public material {
-public:
-  metal(const vec3& a, float f) : albedo(a) {
-    if (f < 1){
-      fuzz = f;
-    } else {
-      fuzz = 1;
-    }
-  }
-    virtual bool scatter(const ray& r_in, const hit_record& rec, vec3& attenuation, ray& scattered) const {
-        vec3 reflected = reflect(unit_vector(r_in.direction()), rec.normal);
-        scattered = ray(rec.p, reflected + fuzz*random_in_unit_sphere(), r_in.time());
-        attenuation = albedo;
-        return (dot(scattered.direction(), rec.normal) > 0);
-    }
-
-    vec3 albedo;
-    float fuzz;
-};
-
-class dielectric : public material {
-  public:
-    dielectric(float ri) : ref_idx(ri) {}
-    virtual bool scatter(const ray& r_in, const hit_record& rec, vec3& attenuation, ray& scattered) const {
-      vec3 outward_normal;
-      vec3 reflected = reflect(r_in.direction(), rec.normal);
-      float ni_over_nt;
-      attenuation = vec3(1.0, 1.0, 1.0);
-      vec3 refracted;
-      float reflect_prob;
-      float cosine;
-      if(dot(r_in.direction(), rec.normal) > 0) {
-        outward_normal = -rec.normal;
-        ni_over_nt = ref_idx;
-        cosine = ref_idx * dot(r_in.direction(), rec.normal) / r_in.direction().length();
-      } else {
-        outward_normal = rec.normal;
-        ni_over_nt = 1.0 / ref_idx;
-        cosine = -dot(r_in.direction(), rec.normal) / r_in.direction().length();
-      }
-
-      if(refract(r_in.direction(), outward_normal, ni_over_nt, refracted)) {
-        reflect_prob = schlick(cosine, ref_idx);
-      } else {
-        scattered = ray(rec.p, reflected, r_in.time());
-        reflect_prob = 1.0;
-      }
-      if(uniform(gen) < reflect_prob) {
-        scattered = ray(rec.p, reflected, r_in.time());
-      } else {
-        scattered = ray(rec.p, refracted, r_in.time());
-      }
-      return true;
-    }
-
-    float ref_idx;
-};
-
-
-
-
-
+// TODO I think remove this? replaced by hitable stuff;
 
 float hit_sphere(const vec3& center, float radius, const ray& r) {
   vec3 oc = r.origin() - center;
@@ -160,21 +58,58 @@ float hit_sphere(const vec3& center, float radius, const ray& r) {
   }
 }
 
+/* 
+ * color function
+ */
+
 vec3 color(const ray& r, hitable* world, int depth) {
   hit_record rec;
   if(world->hit(r, 0.001, FLT_MAX, rec)) {
     ray scattered;
     vec3 attenuation;
+    vec3 emitted = rec.mat_ptr->emitted(rec.u, rec.v, rec.p);
+
     if(depth < 50 && rec.mat_ptr->scatter(r, rec, attenuation, scattered)) {
-      return attenuation*color(scattered, world, depth+1);
+      return emitted + attenuation*color(scattered, world, depth+1);
     } else {
-      return vec3(0,0,0);
+      return emitted;
     }
   } else {
-    vec3 unit_direction = unit_vector(r.direction());
-    float t = 0.5*(unit_direction.y() + 1.0);
-    return (1.0-t)*vec3(1.0, 1.0, 1.0) + t*vec3(0.5, 0.7, 1.0);
+    //vec3 unit_direction = unit_vector(r.direction());
+    //float t = 0.5*(unit_direction.y() + 1.0);
+    //return (1.0-t)*vec3(1.0, 1.0, 1.0) + t*vec3(0.5, 0.7, 1.0);
+    //
+    return vec3(0,0,0);
   }
+}
+
+
+// ****************
+// scene generators
+// ****************
+
+hitable* earth_sphere() {
+  int nx, ny, nn;
+  const std::string filename = "map.jpg";
+  unsigned char* tex_data = stbi_load(filename.c_str(), &nx, &ny, &nn, 0);
+  if (!tex_data) {
+      throw std::runtime_error("File " + filename + " was not found");
+  }
+  material* mat = new lambertian(new image_texture(tex_data, nx, ny));
+
+  hitable** list = new hitable*[5];
+  list[0] = new sphere(vec3(0,2,0), 2, mat);
+  return new hitable_list(list, 1);
+}
+
+hitable* simple_light() {
+  texture* pertext = new noise_texture(4);
+  hitable** list = new hitable*[4];
+  list[0] = new sphere(vec3(0,-1000, 0), 1000, new lambertian(pertext));
+  list[1] = new sphere(vec3(0,2, 0), 2, new lambertian(pertext));
+  list[2] = new xy_rect(3,5,1,3,-2, new diffuse_light(new constant_texture(vec3(4,4,4))));
+  list[3] = new sphere(vec3(0,7, 0), 2, new diffuse_light(new constant_texture(vec3(4,4,4))));
+  return new hitable_list(list, 4);
 }
 
 hitable* two_spheres() {
@@ -225,18 +160,120 @@ hitable* random_scene(float time0, float time1) {
   return new bvh_node(list, i, time0, time1);
 }
 
+hitable* cornell_box() {
+  hitable** list = new hitable*[8];
+  int i = 0;
+  material* red = new lambertian(new constant_texture(vec3(0.65, 0.05, 0.05)));
+  material* white = new lambertian(new constant_texture(vec3(0.73, 0.73, 0.73)));
+  material* green = new lambertian(new constant_texture(vec3(0.12, 0.45, 0.15)));
+  material* light = new diffuse_light(new constant_texture(vec3(15,15,15)));
+
+  list[i++] = new flip_normals(new yz_rect(0,555,0, 555,555,green));
+  list[i++] = new yz_rect(0,555,0, 555,0, red);
+  list[i++] = new xz_rect(213,343,227, 332,554, light);
+  list[i++] = new flip_normals(new xz_rect(0,555,0, 555,555, white));
+  list[i++] = new xz_rect(0,555,0, 555,0, white);
+  list[i++] = new flip_normals(new xy_rect(0,555,0, 555,555, white));
+  list[i++] = new translate(new rotate_y(new box(vec3(0, 0, 0), vec3(165, 165, 165), white), -18), vec3(130,0,65));
+  list[i++] = new translate(new rotate_y(new box(vec3(0, 0, 0), vec3(165, 330, 165), white), 15), vec3(265, 0, 295));
+  return new hitable_list(list, i);
+}
+
+hitable * cornell_smoke() {
+  hitable** list = new hitable*[8];
+  int i = 0;
+  material* red = new lambertian(new constant_texture(vec3(0.65, 0.05, 0.05)));
+  material* white = new lambertian(new constant_texture(vec3(0.73, 0.73, 0.73)));
+  material* green = new lambertian(new constant_texture(vec3(0.12, 0.45, 0.15)));
+  material* light = new diffuse_light(new constant_texture(vec3(7, 7, 7)));
+
+  list[i++] = new flip_normals(new yz_rect(0, 555,0,555,555, green));
+  list[i++] = new yz_rect(0, 555,0,555,0, red);
+  list[i++] = new xz_rect(113, 443,127,432,554, light);
+  list[i++] = new flip_normals(new xz_rect(0,555,0,555,555,white));
+  list[i++] = new xz_rect(0,555,0,555,0,white);
+  list[i++] = new flip_normals(new xy_rect(0,555,0,555,555,white));
+  hitable* b1 = new translate(new rotate_y(new box(vec3(0,0,0), vec3(165, 165,165), white), -18), vec3(130, 0, 65));
+  hitable* b2 = new translate(new rotate_y(new box(vec3(0,0,0), vec3(165, 330,165), white), 15), vec3(265, 0,295));
+
+  list[i++] = new constant_medium(b1, 0.01, new constant_texture(vec3(1.0, 1.0, 1.0)));
+  list[i++] = new constant_medium(b2, 0.01, new constant_texture(vec3(0.0, 0.0, 0.0)));
+  return new hitable_list(list,i);
+}
+
+hitable* final() {
+  int nb = 20;
+  hitable** list = new hitable*[30];
+  hitable** boxlist = new hitable*[10000];
+  hitable** boxlist2 = new hitable*[10000];
+  material* white = new lambertian(new constant_texture(vec3(0.73, 0.73, 0.73)));
+  material* ground = new lambertian(new constant_texture(vec3(0.48, 0.83, 0.53)));
+
+  int b = 0;
+  for (int i = 0; i < nb; ++i) {
+    for (int j = 0; j < nb; ++j) {
+      float w = 100;
+      float x0 = -1000 + i*w;
+      float z0 = -1000 + j*w;
+      float y0 = 0;
+      float x1 = x0 + w;
+      float y1 = 100.0*(uniform(gen) + 0.01);
+      float z1 = z0 + w;
+      boxlist[b++] = new box(vec3(x0, y0, z0), vec3(x1, y1, z1), ground);
+    }
+  }
+  int l = 0;
+  list[l++] = new bvh_node(boxlist, b, 0, 1);
+
+  material* light = new diffuse_light(new constant_texture(vec3(7,7,7)));
+  //list[l++] = new xz_rect(123, 423, 147, 412, 554, light);
+  list[l++] = new sphere(vec3(123, 523, 554), 100, light);
+
+  vec3 center(400, 400, 200);
+  list[l++] = new moving_sphere(center, center+vec3(30,0,0), 0,1,50, new lambertian(new constant_texture(vec3(0.7, 0.3, 0.1))));
+
+  list[l++] = new sphere(vec3(260, 150, 45), 50, new dielectric(1.5));
+  list[l++] = new sphere(vec3(0, 150, 145), 50, new metal(vec3(0.8, 0.8, 0.9), 10.0));
+
+  hitable* boundary = new sphere(vec3(360, 150, 145), 70, new dielectric(1.5));
+
+  list[l++] = boundary;
+  list[l++] = new constant_medium(boundary, 0.2, new constant_texture(vec3(0.2, 0.4, 0.9)));
+  boundary = new sphere(vec3(0,0,0), 5000, new dielectric(1.5));
+  list[l++] = new constant_medium(boundary, 0.0001, new constant_texture(vec3(1.0, 1.0, 1.0)));
+
+  int nx, ny, nn;
+  unsigned char* tex_data = stbi_load("map.jpg", &nx, &ny, &nn, 0);
+  material* emat = new lambertian(new image_texture(tex_data, nx, ny));
+  list[l++] = new sphere(vec3(400, 200, 400), 100, emat);
+
+  texture* pertext = new noise_texture(0.1);
+  list[l++] = new sphere(vec3(220, 280, 300), 800, new lambertian(pertext));
+  int ns = 1000;
+  for (int j = 0; j < ns; ++j) {
+    boxlist2[j] = new sphere(vec3(165*uniform(gen), 165*uniform(gen), 165*uniform(gen)), 100, white);
+  }
+  list[l++] = new translate(new rotate_y(new bvh_node(boxlist2, ns, 0.0, 1.0), 15), vec3(-100, 270, 395));
+  return new hitable_list(list,l);
+
+}
+
+
+/* 
+ * main function
+ */
 
 int main(int argc, char *argv[]) {
 
   // setup size of render image
   //const int nx = 2400;
   //const int ny = 1200;
-  const int size_multiplier = 4;
+  const int size_multiplier = 1;
   const int nx = 200*size_multiplier;
   const int ny = 100*size_multiplier;
 
   // samples for Anti-aliasing
-  const int ns = 100;
+  const int ns = 10000;
 
   const int channels_num = 3;
 
@@ -254,14 +291,26 @@ int main(int argc, char *argv[]) {
 
   //hitable* world = random_scene(time0, time1);
   //hitable* world = two_spheres();
-  hitable* world = two_perlin_spheres();
+  //hitable* world = two_perlin_spheres();
+  //hitable* world = earth_sphere();
+  //hitable* world = simple_light();
+  //hitable* world = cornell_box();
+  //hitable* world = cornell_smoke();
+  hitable* world = final();
 
-  vec3 lookfrom(5,1.5,2);
-  vec3 lookat(0,0,0);
-  float dist_to_focus = (lookfrom-lookat).length();
+  //vec3 lookfrom(5,5,2);
+  //vec3 lookat(0,2,0);
+  //float dist_to_focus = (lookfrom-lookat).length();
+  //float aperature = 0.0;
+  //float vfov = 90;
+
+  vec3 lookfrom(478, 278, -600);
+  vec3 lookat(220, 280, 300);
+  float dist_to_focus = 10.0;
   float aperature = 0.0;
+  float vfov = 40.0;
 
-  camera cam(lookfrom, lookat, vec3(0,1,0), 90, float(nx)/float(ny), aperature, dist_to_focus, time0, time1);
+  camera cam(lookfrom, lookat, vec3(0,1,0), vfov, float(nx)/float(ny), aperature, dist_to_focus, time0, time1);
 
 //  for (int j = ny-1; j >=0; --j) {
   concurrency::parallel_for(int(0), ny-1, [&](size_t j) {
